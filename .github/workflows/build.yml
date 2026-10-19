@@ -1,0 +1,21 @@
+name: Build APK
+on:
+  push: { branches: [ main ] }
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+        with: { gradle-version: '8.11.1' }
+      - run: gradle assembleDebug --no-daemon --stacktrace
+      - run: |
+          mkdir -p out
+          find app/build/outputs/apk -name "*.apk" -exec cp {} out/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CyberGhostChecker-APK
+          path: out/*.apk
