@@ -12,9 +12,16 @@
     <Button android:id="@+id/pick" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:text="اختيار ملف الحسابات"/>
     
+    <Button android:id="@+id/pickProxies" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="اختيار ملف بروكسيات (اختياري)"/>
+
+    <TextView android:id="@+id/tvProxyStatus" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="لا يوجد ملف بروكسيات"
+        android:textSize="12sp" android:textColor="#666" android:paddingBottom="8dp"/>
+
     <EditText android:id="@+id/proxyInput"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:hint="بروكسي (اختياري) مثال: 192.168.1.5:8080"
+        android:hint="أو اكتب بروكسي واحد هنا (IP:PORT)"
         android:textSize="12sp" android:inputType="textUri" />
 
     <Button android:id="@+id/start" android:layout_width="match_parent"

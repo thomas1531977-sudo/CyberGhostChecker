@@ -24,7 +24,8 @@ import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
-    private var proxyAddress: String? = null
+    private var proxyList = mutableListOf<String>()
+    private var singleProxy: String? = null
     
     private val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
     private val cookieJar = object : CookieJar {
@@ -36,30 +37,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private var client: OkHttpClient = OkHttpClient()
-    
-    private fun buildClient(proxy: String?): OkHttpClient {
-        val builder = OkHttpClient.Builder()
-            .cookieJar(cookieJar)
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .followRedirects(true)
-        
-        if (!proxy.isNullOrEmpty()) {
-            try {
-                val parts = proxy.replace("http://", "").split(":")
-                if (parts.size == 2) {
-                    builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(parts[0], parts[1].toInt())))
-                }
-            } catch (e: Exception) {}
-        }
-        return builder.build()
-    }
-        
     private val results = mutableListOf<Triple<String, String, String>>()
     private var combos: List<Pair<String, String>> = emptyList()
     private lateinit var log: TextView
     private lateinit var status: TextView
+    private lateinit var tvProxyStatus: TextView
 
     private val pickFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@registerForActivityResult
@@ -74,20 +56,50 @@ class MainActivity : AppCompatActivity() {
         status.text = "تم تحميل ${combos.size} حساب"
     }
 
+    private val pickProxyFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@registerForActivityResult
+        val text = contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+        proxyList = text.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains(":") }
+            .toMutableList()
+        tvProxyStatus.text = "تم تحميل ${proxyList.size} بروكسي"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         log = findViewById(R.id.log)
         status = findViewById(R.id.status)
+        tvProxyStatus = findViewById(R.id.tvProxyStatus)
         
         val proxyInput = findViewById<EditText>(R.id.proxyInput)
         
         findViewById<Button>(R.id.pick).setOnClickListener { pickFile.launch(arrayOf("*/*")) }
+        findViewById<Button>(R.id.pickProxies).setOnClickListener { pickProxyFile.launch(arrayOf("*/*")) }
         
         findViewById<Button>(R.id.start).setOnClickListener { 
-            proxyAddress = proxyInput.text.toString().trim().ifEmpty { null }
+            singleProxy = proxyInput.text.toString().trim().ifEmpty { null }
             runCheck() 
         }
+    }
+
+    private fun buildClient(proxyStr: String?): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .connectTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(25, TimeUnit.SECONDS)
+            .followRedirects(true)
+        
+        if (!proxyStr.isNullOrEmpty()) {
+            try {
+                val parts = proxyStr.replace("http://", "").replace("https://", "").split(":")
+                if (parts.size == 2) {
+                    builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(parts[0], parts[1].toInt())))
+                }
+            } catch (e: Exception) {}
+        }
+        return builder.build()
     }
 
     private fun runCheck() {
@@ -97,7 +109,6 @@ class MainActivity : AppCompatActivity() {
         }
         results.clear()
         log.text = ""
-        client = buildClient(proxyAddress)
         
         lifecycleScope.launch {
             val total = combos.size
@@ -109,10 +120,13 @@ class MainActivity : AppCompatActivity() {
             for ((index, combo) in combos.withIndex()) {
                 val (email, pwd) = combo
                 
-                // تأخير 4 ثواني
-                delay(4000) 
+                // اختيار بروكسي: لو فيه ملف بروكسيات نختار عشوائي، وإلا نستخدم الفردي
+                val currentProxy = if (proxyList.isNotEmpty()) proxyList.random() else singleProxy
+                val client = buildClient(currentProxy)
+
+                delay(3000) 
                 
-                val (st, detail) = checkOne(email, pwd)
+                val (st, detail) = checkOne(client, email, pwd)
                 
                 results.add(Triple(email, pwd, st))
                 when (st) {
@@ -121,8 +135,9 @@ class MainActivity : AppCompatActivity() {
                     else -> err++
                 }
                 done++
+                val proxyInfo = if (currentProxy != null) " [$currentProxy]" else ""
                 status.text = "$done/$total   صح $valid   خطأ $invalid   أخطاء $err"
-                log.append("$email:$pwd -> $st ($detail)\n")
+                log.append("$email -> $st ($detail)$proxyInfo\n")
                 (log.parent as? ScrollView)?.let { sv ->
                     sv.post { sv.fullScroll(ScrollView.FOCUS_DOWN) }
                 }
@@ -132,7 +147,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun checkOne(email: String, pwd: String): Pair<String, String> =
+    private suspend fun checkOne(client: OkHttpClient, email: String, pwd: String): Pair<String, String> =
         withContext(Dispatchers.IO) {
             try {
                 cookieStore.clear()
